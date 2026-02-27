@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Plump (Oh Hell) — Scorekeeper</title>
+  <style>
+    :root { color-scheme: dark light; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 18px; max-width: 1100px; }
+    h1 { margin: 0 0 10px; font-size: 22px; }
+    .muted { opacity: .75; font-size: 13px; margin: 6px 0 14px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    .card { border: 1px solid rgba(127,127,127,.35); border-radius: 12px; padding: 14px; }
+    .card h2 { margin: 0 0 10px; font-size: 16px; }
+    label { font-size: 12px; opacity: .85; display: block; margin-bottom: 6px; }
+    input, select, button { font: inherit; }
+    input[type="text"], input[type="number"], select {
+      padding: 10px; border-radius: 10px; border: 1px solid rgba(127,127,127,.35);
+      background: transparent; min-width: 160px;
+    }
+    button {
+      padding: 10px 12px; border-radius: 10px;
+      border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.12);
+      cursor: pointer;
+    }
+    button.primary { background: rgba(90, 160, 255, .20); border-color: rgba(90, 160, 255, .55); }
+    button.danger { background: rgba(255, 90, 90, .18); border-color: rgba(255, 90, 90, .55); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .grid { display: grid; gap: 12px; grid-template-columns: 1.25fr .75fr; }
+    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px; border-bottom: 1px solid rgba(127,127,127,.25); vertical-align: middle; }
+    th { text-align: left; font-size: 12px; opacity: .85; }
+    .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(127,127,127,.35); font-size: 12px; opacity: .9; }
+    .right { text-align: right; }
+    .nowrap { white-space: nowrap; }
+    .mini { font-size: 12px; opacity: .8; }
+    .kpi { display: flex; gap: 10px; flex-wrap: wrap; }
+    .kpi .box { min-width: 170px; }
+    .box strong { display: block; font-size: 18px; }
+    .footer { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+    details summary { cursor: pointer; }
+    .hint { font-size: 13px; opacity: .85; margin-top: 8px; }
+    .warn { color: rgba(255, 170, 70, 1); }
+  </style>
+</head>
+<body>
+  <h1>Plump (Oh Hell) — Scorekeeper</h1>
+  <div class="muted">
+    Static single-file score tracker with LocalStorage persistence. Works offline. Round count: <span id="roundCountLabel">10</span>.
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Players</h2>
+      <div class="row">
+        <div>
+          <label for="playerName">Add player</label>
+          <input id="playerName" type="text" placeholder="Name" maxlength="24" />
+        </div>
+        <div>
+          <button id="addPlayerBtn" class="primary">Add</button>
+        </div>
+        <div style="flex:1 1 auto"></div>
+        <div>
+          <label for="roundCount">Rounds (default 10)</label>
+          <input id="roundCount" type="number" min="1" max="30" step="1" />
+        </div>
+        <div>
+          <button id="applyRoundsBtn">Apply</button>
+        </div>
+      </div>
+
+      <div class="hint">
+        Typical Plump scoring supported:
+        <span class="pill">Correct = 10 + bid</span>
+        <span class="pill">Wrong = −|tricks − bid|</span>
+        <span class="pill">Alternative: −10 * diff</span>
+        (switch below)
+      </div>
+
+      <div class="row" style="margin-top: 12px;">
+        <div>
+          <label for="penaltyMode">Penalty mode</label>
+          <select id="penaltyMode">
+            <option value="minusDiff">Wrong = −diff</option>
+            <option value="minus10Diff">Wrong = −10 × diff</option>
+          </select>
+        </div>
+        <div>
+          <label for="baseCorrect">Correct bonus</label>
+          <input id="baseCorrect" type="number" min="0" max="50" step="1" />
+        </div>
+        <div class="mini" style="align-self:center;">
+          Stored automatically.
+        </div>
+      </div>
+
+      <div style="margin-top: 14px; overflow:auto;">
+        <table id="playersTable" aria-label="Players table">
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th class="right nowrap">Total</th>
+              <th class="right nowrap">Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        <button id="resetGameBtn" class="danger">Reset game (clear all)</button>
+        <button id="exportBtn">Export JSON</button>
+        <button id="importBtn">Import JSON</button>
+        <input id="importFile" type="file" accept="application/json" hidden />
+      </div>
+
+      <details style="margin-top: 10px;">
+        <summary>Notes / Rules</summary>
+        <div class="hint">
+          Each round you enter each player's <b>bid</b> and <b>tricks</b>.
+          Press <b>Save round</b> to lock it in (you can still edit past rounds).
+          Totals update instantly and are saved in LocalStorage.
+        </div>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>Round entry</h2>
+
+      <div class="kpi">
+        <div class="box">
+          <label>Current round</label>
+          <strong><span id="currentRoundLabel">1</span> / <span id="maxRoundsLabel">10</span></strong>
+        </div>
+        <div class="box">
+          <label>Status</label>
+          <strong id="roundStatusLabel">Not saved</strong>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top: 12px;">
+        <div>
+          <label for="roundSelect">Go to round</label>
+          <select id="roundSelect"></select>
+        </div>
+        <div>
+          <button id="prevRoundBtn">Prev</button>
+          <button id="nextRoundBtn">Next</button>
+        </div>
+        <div style="flex:1 1 auto"></div>
+        <div>
+          <button id="saveRoundBtn" class="primary">Save round</button>
+        </div>
+      </div>
+
+      <div id="roundWarn" class="hint warn" style="display:none;"></div>
+
+      <div style="margin-top: 14px; overflow:auto;">
+        <table id="roundTable" aria-label="Round input table">
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th class="right nowrap">Bid</th>
+              <th class="right nowrap">Tricks</th>
+              <th class="right nowrap">Round pts</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <details style="margin-top: 10px;">
+        <summary>How points are calculated</summary>
+        <div class="hint" id="formulaLabel"></div>
+      </details>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const STORAGE_KEY = "plump_scorekeeper_v1";
+
+      const els = {
+        playerName: document.getElementById("playerName"),
+        addPlayerBtn: document.getElementById("addPlayerBtn"),
+        playersTbody: document.querySelector("#playersTable tbody"),
+
+        roundCount: document.getElementById("roundCount"),
+        roundCountLabel: document.getElementById("roundCountLabel"),
+        maxRoundsLabel: document.getElementById("maxRoundsLabel"),
+        applyRoundsBtn: document.getElementById("applyRoundsBtn"),
+
+        penaltyMode: document.getElementById("penaltyMode"),
+        baseCorrect: document.getElementById("baseCorrect"),
+
+        roundSelect: document.getElementById("roundSelect"),
+        prevRoundBtn: document.getElementById("prevRoundBtn"),
+        nextRoundBtn: document.getElementById("nextRoundBtn"),
+        currentRoundLabel: document.getElementById("currentRoundLabel"),
+        roundStatusLabel: document.getElementById("roundStatusLabel"),
+        saveRoundBtn: document.getElementById("saveRoundBtn"),
+        roundTbody: document.querySelector("#roundTable tbody"),
+        roundWarn: document.getElementById("roundWarn"),
+        formulaLabel: document.getElementById("formulaLabel"),
+
+        resetGameBtn: document.getElementById("resetGameBtn"),
+        exportBtn: document.getElementById("exportBtn"),
+        importBtn: document.getElementById("importBtn"),
+        importFile: document.getElementById("importFile"),
+      };
+
+      /** @type {{
+       *  settings: { rounds: number, baseCorrect: number, penaltyMode: "minusDiff"|"minus10Diff" },
+       *  players: { id: string, name: string }[],
+       *  rounds: { saved: boolean, entries: Record<string, { bid: number|null, tricks: number|null }> }[],
+       *  ui: { currentRoundIndex: number }
+       * }} */
+      let state = loadState();
+
+      function uid() {
+        return Math.random().toString(16).slice(2) + Date.now().toString(16);
+      }
+
+      function defaultState() {
+        return {
+          settings: { rounds: 10, baseCorrect: 10, penaltyMode: "minusDiff" },
+          players: [],
+          rounds: Array.from({ length: 10 }, () => ({ saved: false, entries: {} })),
+          ui: { currentRoundIndex: 0 }
+        };
+      }
+
+      function loadState() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return defaultState();
+          const parsed = JSON.parse(raw);
+
+          // Basic migration / validation
+          const s = defaultState();
+          const merged = {
+            ...s,
+            ...parsed,
+            settings: { ...s.settings, ...(parsed.settings || {}) },
+            ui: { ...s.ui, ...(parsed.ui || {}) },
+          };
+
+          // Ensure rounds array length matches settings.rounds
+          merged.rounds = Array.isArray(parsed.rounds) ? parsed.rounds : s.rounds;
+          if (typeof merged.settings.rounds !== "number" || merged.settings.rounds < 1) merged.settings.rounds = 10;
+          merged.rounds = normalizeRounds(merged.rounds, merged.settings.rounds);
+          if (!Array.isArray(merged.players)) merged.players = [];
+
+          // Ensure each round has required shape
+          merged.rounds = merged.rounds.map(r => ({
+            saved: !!r.saved,
+            entries: (r && typeof r.entries === "object" && r.entries) ? r.entries : {}
+          }));
+
+          // Clamp ui current round
+          merged.ui.currentRoundIndex = clampInt(merged.ui.currentRoundIndex, 0, merged.settings.rounds - 1);
+          return merged;
+        } catch {
+          return defaultState();
+        }
+      }
+
+      function saveState() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+
+      function clampInt(n, min, max) {
+        n = Number.isFinite(+n) ? Math.trunc(+n) : min;
+        return Math.max(min, Math.min(max, n));
+      }
+
+      function normalizeRounds(roundsArr, desiredLen) {
+        const r = Array.isArray(roundsArr) ? roundsArr.slice(0, desiredLen) : [];
+        while (r.length < desiredLen) r.push({ saved: false, entries: {} });
+        return r;
+      }
+
+      function getCurrentRoundIndex() {
+        return clampInt(state.ui.currentRoundIndex, 0, state.settings.rounds - 1);
+      }
+
+      function setCurrentRoundIndex(idx) {
+        state.ui.currentRoundIndex = clampInt(idx, 0, state.settings.rounds - 1);
+        saveState();
+        renderAll();
+      }
+
+      function calcRoundPoints(bid, tricks) {
+        if (bid == null || tricks == null) return 0;
+        const diff = Math.abs(tricks - bid);
+        if (diff === 0) return state.settings.baseCorrect + bid;
+        if (state.settings.penaltyMode === "minus10Diff") return -10 * diff;
+        return -diff;
+      }
+
+      function calcTotals() {
+        const totals = new Map(state.players.map(p => [p.id, 0]));
+        state.rounds.forEach(r => {
+          state.players.forEach(p => {
+            const e = r.entries[p.id] || { bid: null, tricks: null };
+            const pts = calcRoundPoints(e.bid, e.tricks);
+            totals.set(p.id, (totals.get(p.id) || 0) + pts);
+          });
+        });
+        return totals;
+      }
+
+      function renderPlayers() {
+        const totals = calcTotals();
+        els.playersTbody.innerHTML = "";
+
+        const sorted = [...state.players].sort((a, b) => (totals.get(b.id) || 0) - (totals.get(a.id) || 0));
+        for (const p of sorted) {
+          const tr = document.createElement("tr");
+
+          const tdName = document.createElement("td");
+          tdName.textContent = p.name;
+
+          const tdTotal = document.createElement("td");
+          tdTotal.className = "right nowrap";
+          tdTotal.textContent = String(totals.get(p.id) || 0);
+
+          const tdActions = document.createElement("td");
+          tdActions.className = "right nowrap";
+
+          const renameBtn = document.createElement("button");
+          renameBtn.textContent = "Rename";
+          renameBtn.addEventListener("click", () => {
+            const name = prompt("New player name:", p.name);
+            if (!name) return;
+            const trimmed = name.trim();
+            if (!trimmed) return;
+            p.name = trimmed.slice(0, 24);
+            saveState();
+            renderAll();
+          });
+
+          const delBtn = document.createElement("button");
+          delBtn.textContent = "Remove";
+          delBtn.className = "danger";
+          delBtn.style.marginLeft = "8px";
+          delBtn.addEventListener("click", () => removePlayer(p.id));
+
+          tdActions.append(renameBtn, delBtn);
+          tr.append(tdName, tdTotal, tdActions);
+          els.playersTbody.appendChild(tr);
+        }
+      }
+
+      function removePlayer(playerId) {
+        const player = state.players.find(p => p.id === playerId);
+        if (!player) return;
+        const ok = confirm(`Remove "${player.name}"? This removes them from all rounds.`);
+        if (!ok) return;
+
+        state.players = state.players.filter(p => p.id !== playerId);
+        // Remove entries for this player from all rounds
+        state.rounds.forEach(r => { delete r.entries[playerId]; });
+        saveState();
+        renderAll();
+      }
+
+      function renderRoundSelector() {
+        els.roundSelect.innerHTML = "";
+        for (let i = 0; i < state.settings.rounds; i++) {
+          const opt = document.createElement("option");
+          opt.value = String(i);
+          opt.textContent = `Round ${i + 1}`;
+          els.roundSelect.appendChild(opt);
+        }
+        els.roundSelect.value = String(getCurrentRoundIndex());
+      }
+
+      function renderRoundTable() {
+        const idx = getCurrentRoundIndex();
+        const round = state.rounds[idx];
+        els.roundTbody.innerHTML = "";
+
+        const totals = calcTotals(); // not strictly needed, but fine
+        void totals;
+
+        // Warning if no players
+        els.roundWarn.style.display = "none";
+        els.roundWarn.textContent = "";
+
+        if (state.players.length === 0) {
+          els.roundWarn.style.display = "block";
+          els.roundWarn.textContent = "Add at least one player to start scoring.";
+          return;
+        }
+
+        for (const p of state.players) {
+          const e = round.entries[p.id] || { bid: null, tricks: null };
+
+          const tr = document.createElement("tr");
+
+          const tdPlayer = document.createElement("td");
+          tdPlayer.textContent = p.name;
+
+          const tdBid = document.createElement("td");
+          tdBid.className = "right nowrap";
+          const bidInput = document.createElement("input");
+          bidInput.type = "number";
+          bidInput.min = "0";
+          bidInput.max = "13";
+          bidInput.step = "1";
+          bidInput.value = (e.bid == null ? "" : String(e.bid));
+          bidInput.style.minWidth = "90px";
+          bidInput.addEventListener("input", () => {
+            const v = bidInput.value.trim();
+            const bid = v === "" ? null : clampInt(v, 0, 13);
+            round.entries[p.id] = { ...(round.entries[p.id] || { bid: null, tricks: null }), bid };
+            saveState();
+            renderAll(false);
+          });
+          tdBid.appendChild(bidInput);
+
+          const tdTricks = document.createElement("td");
+          tdTricks.className = "right nowrap";
+          const tricksInput = document.createElement("input");
+          tricksInput.type = "number";
+          tricksInput.min = "0";
+          tricksInput.max = "13";
+          tricksInput.step = "1";
+          tricksInput.value = (e.tricks == null ? "" : String(e.tricks));
+          tricksInput.style.minWidth = "90px";
+          tricksInput.addEventListener("input", () => {
+            const v = tricksInput.value.trim();
+            const tricks = v === "" ? null : clampInt(v, 0, 13);
+            round.entries[p.id] = { ...(round.entries[p.id] || { bid: null, tricks: null }), tricks };
+            saveState();
+            renderAll(false);
+          });
+          tdTricks.appendChild(tricksInput);
+
+          const tdPts = document.createElement("td");
+          tdPts.className = "right nowrap";
+          tdPts.textContent = String(calcRoundPoints(e.bid, e.tricks));
+
+          tr.append(tdPlayer, tdBid, tdTricks, tdPts);
+          els.roundTbody.appendChild(tr);
+        }
+
+        const saved = !!round.saved;
+        els.roundStatusLabel.textContent = saved ? "Saved" : "Not saved";
+        els.currentRoundLabel.textContent = String(idx + 1);
+
+        els.prevRoundBtn.disabled = idx === 0;
+        els.nextRoundBtn.disabled = idx === state.settings.rounds - 1;
+      }
+
+      function renderSettings() {
+        els.roundCount.value = String(state.settings.rounds);
+        els.roundCountLabel.textContent = String(state.settings.rounds);
+        els.maxRoundsLabel.textContent = String(state.settings.rounds);
+
+        els.penaltyMode.value = state.settings.penaltyMode;
+        els.baseCorrect.value = String(state.settings.baseCorrect);
+
+        els.formulaLabel.textContent =
+          state.settings.penaltyMode === "minus10Diff"
+            ? `If tricks = bid: points = ${state.settings.baseCorrect} + bid. Otherwise: points = −10 × |tricks − bid|.`
+            : `If tricks = bid: points = ${state.settings.baseCorrect} + bid. Otherwise: points = −|tricks − bid|.`;
+      }
+
+      function renderAll(includeRoundSelect = true) {
+        renderSettings();
+        renderPlayers();
+        if (includeRoundSelect) renderRoundSelector();
+        renderRoundTable();
+      }
+
+      function addPlayer(name) {
+        const trimmed = (name || "").trim();
+        if (!trimmed) return;
+
+        const safeName = trimmed.slice(0, 24);
+        const p = { id: uid(), name: safeName };
+        state.players.push(p);
+
+        // Ensure every round has an entry object (not necessary, but convenient)
+        state.rounds.forEach(r => {
+          if (!r.entries[p.id]) r.entries[p.id] = { bid: null, tricks: null };
+        });
+
+        saveState();
+        renderAll();
+      }
+
+      function applyRounds(newCount) {
+        const rounds = clampInt(newCount, 1, 30);
+        state.settings.rounds = rounds;
+        state.rounds = normalizeRounds(state.rounds, rounds);
+        state.ui.currentRoundIndex = clampInt(state.ui.currentRoundIndex, 0, rounds - 1);
+        saveState();
+        renderAll();
+      }
+
+      function saveCurrentRound() {
+        const idx = getCurrentRoundIndex();
+        const round = state.rounds[idx];
+
+        // Basic validation: require entries for all players
+        const missing = [];
+        for (const p of state.players) {
+          const e = round.entries[p.id] || { bid: null, tricks: null };
+          if (e.bid == null || e.tricks == null) missing.push(p.name);
+        }
+
+        if (missing.length > 0) {
+          els.roundWarn.style.display = "block";
+          els.roundWarn.textContent = `Missing bid/tricks for: ${missing.join(", ")}`;
+          return;
+        }
+
+        round.saved = true;
+        saveState();
+        renderAll(false);
+      }
+
+      function resetGame() {
+        const ok = confirm("Reset game and clear all stored data?");
+        if (!ok) return;
+        localStorage.removeItem(STORAGE_KEY);
+        state = defaultState();
+        saveState();
+        renderAll();
+      }
+
+      function exportJson() {
+        const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "plump-scorekeeper.json";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      function importJsonFile(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const incoming = JSON.parse(String(reader.result || ""));
+            // Replace state using load-like merge
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(incoming));
+            state = loadState();
+            saveState();
+            renderAll();
+          } catch {
+            alert("Invalid JSON file.");
+          }
+        };
+        reader.readAsText(file);
+      }
+
+      // Wire events
+      els.addPlayerBtn.addEventListener("click", () => {
+        addPlayer(els.playerName.value);
+        els.playerName.value = "";
+        els.playerName.focus();
+      });
+
+      els.playerName.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          els.addPlayerBtn.click();
+        }
+      });
+
+      els.applyRoundsBtn.addEventListener("click", () => applyRounds(els.roundCount.value));
+
+      els.penaltyMode.addEventListener("change", () => {
+        state.settings.penaltyMode = els.penaltyMode.value === "minus10Diff" ? "minus10Diff" : "minusDiff";
+        saveState();
+        renderAll(false);
+      });
+
+      els.baseCorrect.addEventListener("input", () => {
+        const v = els.baseCorrect.value.trim();
+        state.settings.baseCorrect = clampInt(v, 0, 50);
+        saveState();
+        renderAll(false);
+      });
+
+      els.roundSelect.addEventListener("change", () => setCurrentRoundIndex(els.roundSelect.value));
+
+      els.prevRoundBtn.addEventListener("click", () => setCurrentRoundIndex(getCurrentRoundIndex() - 1));
+      els.nextRoundBtn.addEventListener("click", () => setCurrentRoundIndex(getCurrentRoundIndex() + 1));
+
+      els.saveRoundBtn.addEventListener("click", saveCurrentRound);
+
+      els.resetGameBtn.addEventListener("click", resetGame);
+
+      els.exportBtn.addEventListener("click", exportJson);
+
+      els.importBtn.addEventListener("click", () => els.importFile.click());
+      els.importFile.addEventListener("change", () => {
+        const f = els.importFile.files && els.importFile.files[0];
+        if (f) importJsonFile(f);
+        els.importFile.value = "";
+      });
+
+      // Initial render
+      saveState();
+      renderAll();
+    })();
+  </script>
+</body>
+</html>
