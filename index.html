@@ -72,11 +72,11 @@
       </div>
 
       <div class="hint">
-        Typical Plump scoring supported:
+        Scoring supported:
         <span class="pill">Correct = 10 + bid</span>
-        <span class="pill">Wrong = −|tricks − bid|</span>
-        <span class="pill">Alternative: −10 * diff</span>
-        (switch below)
+        <span class="pill">Wrong = −diff</span>
+        <span class="pill">Wrong = −10 × diff</span>
+        <span class="pill">Wrong = 0 (no penalty)</span>
       </div>
 
       <div class="row" style="margin-top: 12px;">
@@ -85,6 +85,7 @@
           <select id="penaltyMode">
             <option value="minusDiff">Wrong = −diff</option>
             <option value="minus10Diff">Wrong = −10 × diff</option>
+            <option value="none">Wrong = 0 (no penalty)</option>
           </select>
         </div>
         <div>
@@ -212,7 +213,7 @@
       };
 
       /** @type {{
-       *  settings: { rounds: number, baseCorrect: number, penaltyMode: "minusDiff"|"minus10Diff" },
+       *  settings: { rounds: number, baseCorrect: number, penaltyMode: "minusDiff"|"minus10Diff"|"none" },
        *  players: { id: string, name: string }[],
        *  rounds: { saved: boolean, entries: Record<string, { bid: number|null, tricks: number|null }> }[],
        *  ui: { currentRoundIndex: number }
@@ -238,7 +239,6 @@
           if (!raw) return defaultState();
           const parsed = JSON.parse(raw);
 
-          // Basic migration / validation
           const s = defaultState();
           const merged = {
             ...s,
@@ -247,20 +247,26 @@
             ui: { ...s.ui, ...(parsed.ui || {}) },
           };
 
-          // Ensure rounds array length matches settings.rounds
           merged.rounds = Array.isArray(parsed.rounds) ? parsed.rounds : s.rounds;
           if (typeof merged.settings.rounds !== "number" || merged.settings.rounds < 1) merged.settings.rounds = 10;
           merged.rounds = normalizeRounds(merged.rounds, merged.settings.rounds);
           if (!Array.isArray(merged.players)) merged.players = [];
 
-          // Ensure each round has required shape
           merged.rounds = merged.rounds.map(r => ({
             saved: !!r.saved,
             entries: (r && typeof r.entries === "object" && r.entries) ? r.entries : {}
           }));
 
-          // Clamp ui current round
           merged.ui.currentRoundIndex = clampInt(merged.ui.currentRoundIndex, 0, merged.settings.rounds - 1);
+
+          // Validate penaltyMode
+          if (!["minusDiff", "minus10Diff", "none"].includes(merged.settings.penaltyMode)) {
+            merged.settings.penaltyMode = "minusDiff";
+          }
+
+          // Validate baseCorrect
+          merged.settings.baseCorrect = clampInt(merged.settings.baseCorrect, 0, 50);
+
           return merged;
         } catch {
           return defaultState();
@@ -296,6 +302,8 @@
         if (bid == null || tricks == null) return 0;
         const diff = Math.abs(tricks - bid);
         if (diff === 0) return state.settings.baseCorrect + bid;
+
+        if (state.settings.penaltyMode === "none") return 0;
         if (state.settings.penaltyMode === "minus10Diff") return -10 * diff;
         return -diff;
       }
@@ -361,7 +369,6 @@
         if (!ok) return;
 
         state.players = state.players.filter(p => p.id !== playerId);
-        // Remove entries for this player from all rounds
         state.rounds.forEach(r => { delete r.entries[playerId]; });
         saveState();
         renderAll();
@@ -383,16 +390,16 @@
         const round = state.rounds[idx];
         els.roundTbody.innerHTML = "";
 
-        const totals = calcTotals(); // not strictly needed, but fine
-        void totals;
-
-        // Warning if no players
         els.roundWarn.style.display = "none";
         els.roundWarn.textContent = "";
 
         if (state.players.length === 0) {
           els.roundWarn.style.display = "block";
           els.roundWarn.textContent = "Add at least one player to start scoring.";
+          els.roundStatusLabel.textContent = "Not saved";
+          els.currentRoundLabel.textContent = String(idx + 1);
+          els.prevRoundBtn.disabled = idx === 0;
+          els.nextRoundBtn.disabled = idx === state.settings.rounds - 1;
           return;
         }
 
@@ -464,10 +471,14 @@
         els.penaltyMode.value = state.settings.penaltyMode;
         els.baseCorrect.value = String(state.settings.baseCorrect);
 
-        els.formulaLabel.textContent =
-          state.settings.penaltyMode === "minus10Diff"
-            ? `If tricks = bid: points = ${state.settings.baseCorrect} + bid. Otherwise: points = −10 × |tricks − bid|.`
-            : `If tricks = bid: points = ${state.settings.baseCorrect} + bid. Otherwise: points = −|tricks − bid|.`;
+        const base = state.settings.baseCorrect;
+        if (state.settings.penaltyMode === "none") {
+          els.formulaLabel.textContent = `If tricks = bid: points = ${base} + bid. Otherwise: points = 0 (no penalty).`;
+        } else if (state.settings.penaltyMode === "minus10Diff") {
+          els.formulaLabel.textContent = `If tricks = bid: points = ${base} + bid. Otherwise: points = −10 × |tricks − bid|.`;
+        } else {
+          els.formulaLabel.textContent = `If tricks = bid: points = ${base} + bid. Otherwise: points = −|tricks − bid|.`;
+        }
       }
 
       function renderAll(includeRoundSelect = true) {
@@ -485,7 +496,6 @@
         const p = { id: uid(), name: safeName };
         state.players.push(p);
 
-        // Ensure every round has an entry object (not necessary, but convenient)
         state.rounds.forEach(r => {
           if (!r.entries[p.id]) r.entries[p.id] = { bid: null, tricks: null };
         });
@@ -507,7 +517,6 @@
         const idx = getCurrentRoundIndex();
         const round = state.rounds[idx];
 
-        // Basic validation: require entries for all players
         const missing = [];
         for (const p of state.players) {
           const e = round.entries[p.id] || { bid: null, tricks: null };
@@ -551,7 +560,6 @@
         reader.onload = () => {
           try {
             const incoming = JSON.parse(String(reader.result || ""));
-            // Replace state using load-like merge
             localStorage.setItem(STORAGE_KEY, JSON.stringify(incoming));
             state = loadState();
             saveState();
@@ -563,7 +571,6 @@
         reader.readAsText(file);
       }
 
-      // Wire events
       els.addPlayerBtn.addEventListener("click", () => {
         addPlayer(els.playerName.value);
         els.playerName.value = "";
@@ -580,7 +587,8 @@
       els.applyRoundsBtn.addEventListener("click", () => applyRounds(els.roundCount.value));
 
       els.penaltyMode.addEventListener("change", () => {
-        state.settings.penaltyMode = els.penaltyMode.value === "minus10Diff" ? "minus10Diff" : "minusDiff";
+        const v = els.penaltyMode.value;
+        state.settings.penaltyMode = (v === "minus10Diff" || v === "none") ? v : "minusDiff";
         saveState();
         renderAll(false);
       });
@@ -610,7 +618,6 @@
         els.importFile.value = "";
       });
 
-      // Initial render
       saveState();
       renderAll();
     })();
